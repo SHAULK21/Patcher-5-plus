@@ -174,10 +174,42 @@ with tab_patch:
         if analysis["hook_offset"] is not None:
             st.success(f"Обнаружена сигнатура: **{analysis['matched_form']}**")
             
+            # --- HONEST DISASSEMBLY VIEWER ---
+            st.markdown("#### 🔍 Реальный дизассемблер Thumb-2 (Честный побайтовый листинг без бутафории)")
+            hook_off = analysis["hook_offset"]
+            start_off = max(0, hook_off - 8)
+            end_off = min(len(file_bytes), hook_off + 10)
+            
+            lines = []
+            for cur_off in range(start_off, end_off, 2):
+                b0 = file_bytes[cur_off]
+                b1 = file_bytes[cur_off + 1]
+                pc = 0x08000000 + cur_off
+                
+                # Simple Thumb-2 decoder
+                code = b0 | (b1 << 8)
+                if (code & 0xF800) == 0x2000:
+                    dis = f"MOVS r{(code >> 8) & 7}, #{code & 0xFF}"
+                elif (code & 0xF800) == 0x7800:
+                    dis = f"LDRB r{code & 7}, [r{(code >> 3) & 7}, #{(code >> 6) & 0x1F}]"
+                elif (code & 0xF800) == 0x8000:
+                    dis = f"STRH r{code & 7}, [r{(code >> 3) & 7}, #{((code >> 6) & 0x1F)*2}]"
+                elif (code & 0xF800) == 0x4800:
+                    dis = f"LDR r{(code >> 8) & 7}, [PC, #{(code & 0xFF)*4}]"
+                elif code == 0x4770:
+                    dis = "BX LR"
+                else:
+                    dis = f".short 0x{code:04X}"
+                
+                marker = "🔥 [ХУК СКОРОСТИ] ==>" if cur_off == hook_off else "                   "
+                lines.append(f"{marker} 0x{pc:08X} (Offset 0x{cur_off:05X}): [{b0:02X} {b1:02X}]  {dis}")
+                
+            st.code("\n".join(lines), language="text")
+
             st.markdown("---")
             target_speed = st.slider("Выберите максимальную скорость (км/ч):", min_value=20, max_value=45, value=35, step=1)
 
-            if st.button("🚀 Применить безопасный патч скорости", type="primary"):
+            if st.button("🚀 Применить безопасный патч скорости (Точечная замена 2 байт)", type="primary"):
                 try:
                     patched_bin = Mi5PlusSafePatcher.apply_speed_patch(file_bytes, target_speed)
                     st.success(f"Прошивка успешно пропатчена на **{target_speed} км/ч**!")
