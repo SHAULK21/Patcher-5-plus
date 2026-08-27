@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Xiaomi Scooter 5 Plus RE Analyzer</title>
+    <meta name="description" content="Reverse engineering suite and mode analyzer for Xiaomi Electric Scooter 5 Plus firmware" />
+    <script>
+      // Ensure window.fetch is safely configurable and writable if platform wrappers attempt to intercept it
+      try {
+        if (window.fetch && Object.getOwnPropertyDescriptor(window, 'fetch')?.configurable) {
+          const originalFetch = window.fetch.bind(window);
+          let currentFetch = originalFetch;
+          Object.defineProperty(window, 'fetch', {
+            configurable: true,
+            enumerable: true,
+            get() {
+              return currentFetch;
+            },
+            set(v) {
+              currentFetch = v;
+            }
+          });
+        }
+      } catch (e) {
+        // Fallback silently if environment restricts property definition
+      }
+    </script>
+  </head>
+  <body class="bg-slate-950 text-slate-100">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+

@@ -1,0 +1,6 @@
+{
+  "name": "Xiaomi Scooter 5 Plus RE Analyzer",
+  "description": "Reverse engineering suite and mode analyzer for Xiaomi Electric Scooter 5 Plus firmware: Eco, Drive, Sport data-flow analysis, speed hooks, and patch inspection.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

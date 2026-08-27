@@ -1,0 +1,6 @@
+# Analysis of User Provided Xiaomi 5 Plus Firmware
+# Header analysis:
+# 1. Hardware ID: SZMC-ES-02664-LQ (Brightway ES32 / SZMC Controller board)
+# 2. Model: xiaomi.scooter.5plus
+# 3. Protocol Version / Firmware Build: WZKPA81223 V100 / A0612
+# 4. FOTA Package: MITFOTA container with X.509 ECDSA certificate chain (Mijia Open / Xiaomi Root)
