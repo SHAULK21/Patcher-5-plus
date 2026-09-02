@@ -3,31 +3,45 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Xiaomi Scooter 5 Plus RE Analyzer</title>
-    <meta name="description" content="Reverse engineering suite and mode analyzer for Xiaomi Electric Scooter 5 Plus firmware" />
+    <title>BW-Patched — Xiaomi 5 Plus Firmware RE &amp; Patcher</title>
+    <meta name="description" content="Reverse engineering suite and patcher for Xiaomi Scooter 5 Plus (Brightway MCU / ES32)." />
     <script>
-      // Ensure window.fetch is safely configurable and writable if platform wrappers attempt to intercept it
-      try {
-        if (window.fetch && Object.getOwnPropertyDescriptor(window, 'fetch')?.configurable) {
-          const originalFetch = window.fetch.bind(window);
-          let currentFetch = originalFetch;
+      // Safeguard for environments where window.fetch has only a getter
+      (function() {
+        try {
+          var originalFetch = window.fetch ? window.fetch.bind(window) : null;
+          var customFetch = originalFetch;
           Object.defineProperty(window, 'fetch', {
-            configurable: true,
-            enumerable: true,
-            get() {
-              return currentFetch;
+            get: function() {
+              return customFetch || originalFetch;
             },
-            set(v) {
-              currentFetch = v;
-            }
+            set: function(fn) {
+              customFetch = fn;
+            },
+            configurable: true,
+            enumerable: true
           });
+        } catch (err) {
+          try {
+            if (typeof Window !== 'undefined' && Window.prototype) {
+              var protoFetch = Window.prototype.fetch;
+              Object.defineProperty(Window.prototype, 'fetch', {
+                get: function() {
+                  return protoFetch;
+                },
+                set: function(fn) {
+                  protoFetch = fn;
+                },
+                configurable: true,
+                enumerable: true
+              });
+            }
+          } catch (e) {}
         }
-      } catch (e) {
-        // Fallback silently if environment restricts property definition
-      }
+      })();
     </script>
   </head>
-  <body class="bg-slate-950 text-slate-100">
+  <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

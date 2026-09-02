@@ -1,114 +1,83 @@
-export type ConfidenceLevel = 'CONFIRMED' | 'STRONG CANDIDATE' | 'UNCONFIRMED' | 'REFUTED';
+export type ConfidenceLevel = 'CONFIRMED' | 'STRONG CANDIDATE' | 'UNCONFIRMED';
 
-export interface REItem {
+export interface DataflowNode {
   id: string;
-  category: 'speed' | 'modes' | 'current_power' | 'security';
   title: string;
-  titleRu: string;
+  subtitle: string;
+  category: 'actuator' | 'clamp' | 'scaling' | 'ram' | 'hook' | 'source' | 'mode';
   confidence: ConfidenceLevel;
-  mcuAddress?: string;
-  fileOffset?: string;
-  originalBytes?: string;
-  patchedBytes?: string;
+  addressMCU: string;
+  fileOffset: string;
+  bytes: string;
+  thumbAsm: string;
   description: string;
-  descriptionRu: string;
-  evidence: string[];
-  evidenceRu: string[];
-  caveats?: string;
-  caveatsRu?: string;
+  incomingFrom?: string[];
+  notes?: string;
 }
 
-export interface ModeEntry {
-  modeName: string;
-  modeNameRu: string;
-  code: number;
-  nominalSpeedKmh: number;
-  scaledInternalValue: number;
-  status: ConfidenceLevel;
-  storageType: string;
-  storageTypeRu: string;
-  details: string;
-  detailsRu: string;
+export interface DisassemblyInstruction {
+  offset: number;
+  mcuAddr: number;
+  bytes: string;
+  mnemonic: string;
+  operands: string;
+  comment?: string;
+  isHook?: boolean;
+  confidence?: ConfidenceLevel;
+  highlight?: 'speed' | 'clamp' | 'scale' | 'ram' | 'state';
 }
 
-export interface DataFlowStep {
-  step: number;
-  name: string;
-  nameRu: string;
-  location: string;
-  codeSnippet: string;
-  description: string;
-  descriptionRu: string;
-  status: ConfidenceLevel;
-}
-
-export interface MemoryEntry {
+export interface DisassemblyRange {
   id: string;
-  offsetOrAddr: string;
-  sizeBytes: number;
-  type: 'Flash' | 'RAM' | 'Register';
-  name: string;
+  title: string;
   description: string;
-  status: ConfidenceLevel;
+  startOffset: number;
+  endOffset: number;
+  mcuBase: number;
+  instructions: DisassemblyInstruction[];
 }
 
-export interface HookPattern {
+export interface RamMapEntry {
   id: string;
-  name: string;
-  nameRu: string;
-  patternHex: string; // e.g. "?? 49 78 7A 08 80"
-  description: string;
-  descriptionRu: string;
-  regexStr: string;
-  isPristine: boolean;
-  isAlreadyPatched: boolean;
+  paramId: string;
+  ramAddress: string;
+  currentHypothesis: string;
+  confidence: ConfidenceLevel;
+  notes: string;
 }
 
-export interface FirmwareFingerprint {
-  modelTag: string;
-  mcuArch: string;
-  baseAddress: string;
-  vectorTableOffset: string;
-  minFirmwareSize: number;
-  maxFirmwareSize: number;
-  knownHardwareRevisions: string[];
-  indicators: {
-    rule: string;
-    ruleRu: string;
-    status: 'VERIFIED' | 'IN_PROGRESS';
-  }[];
+export interface MathBlockEntry {
+  id: string;
+  offset: string;
+  mcuAddress: string;
+  operation: string;
+  multiplier: string;
+  rawInstructions: string;
+  candidateMeaning: string;
+  confidence: ConfidenceLevel;
+  category: 'speed' | 'current' | 'power' | 'thermal' | 'unknown';
 }
 
-export interface DiagnosticScanResult {
-  fingerprintMatch: boolean;
-  fingerprintName: string;
+export interface PatchConfig {
+  targetSpeedImm: number; // e.g. 0x19 (25), 0x1E (30), 0x23 (35)
+  customHex?: string;
+  preserveSig: boolean;
+  disableKers?: boolean; // Complete disable of regenerative braking on throttle release
+  kersMode?: 'stock' | 'disabled' | 'low' | 'medium' | 'high';
+}
+
+export interface PatchResult {
+  success: boolean;
+  message: string;
+  signatureFound: boolean;
+  signatureOffset: number;
+  originalBytes: string;
+  patchedBytes: string;
+  kersPatchApplied?: boolean;
+  kersOriginalBytes?: string;
+  kersPatchedBytes?: string;
   fileSize: number;
-  
-  // 5 Key Diagnostic Parameters
-  selectorFound: boolean;
-  selectorAddress: string;
-  selectorRefInfo: string;
-  selectorRefInfoRu: string;
-  
-  hookFound: boolean;
-  hookFormId?: string;
-  hookFormName?: string;
-  hookFormNameRu?: string;
-  
-  currentModeId: number; // 0=Eco, 1=Drive, 2=Sport
-  currentModeName: string;
-  currentModeNameRu: string;
-  
-  currentSpeedByteHex: string; // e.g. "78 7A" or "23 20"
-  currentSpeedDecoded: string; // e.g. "LDRB r0, [r7, #9]" or "MOVS r0, #35"
-  currentSpeedKmh?: number;
-  
-  fileOffset?: number;
-  mcuAddress?: number;
-  originalBytesHex?: string;
-  regBase?: string;
-  structOffsetHex?: string;
-  isPatched?: boolean;
-  logs: string[];
+  sha256Original: string;
+  sha256Patched: string;
+  patchedBuffer?: Uint8Array;
 }
-

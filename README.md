@@ -1,106 +1,75 @@
-# Xiaomi Electric Scooter 5 Plus — Verified Firmware Analysis & Patcher Tool
+# 🛴 Xiaomi Electric Scooter 5 Plus — Firmware Studio & Patcher
 
-[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://streamlit.io)
+[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://share.streamlit.io)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Platform](https://img.shields.io/badge/Platform-Brightway%20%2F%20SZMC-blue.svg)](https://github.com)
-[![MCU](https://img.shields.io/badge/Architecture-ARM%20Cortex--M%20(Thumb--2)-brightgreen.svg)](https://github.com)
+[![Hardware](https://img.shields.io/badge/Target-Brightway%20MCU%20(ES32)-red.svg)](#)
 
-A specialized, verified reverse-engineering toolkit and Streamlit web application for analyzing, patching, and flashing custom firmware on the **Xiaomi Electric Scooter 5 Plus** equipped with the **Brightway / SZMC Controller (`SZMC-ES-02664-LQ`, firmware build `WZKPA81223 V100`)**.
+Интерактивный конфигуратор и дизассемблерный патчер прошивки для электросамоката **Xiaomi Electric Scooter 5 Plus** (контроллер **Brightway SZMC-ES-02664-LQ** на базе микроконтроллера **ES32 / ARM Cortex-M4**).
 
----
-
-## ⚡ Key Confirmed Features
-
-- **🛡️ Safe 2-Byte Thumb-2 Speed Hook:** Modifies strictly the dynamic profile speed-reading instruction at file offset `0x5C74` (`LDRB r0, [r7, #9]` ➔ `MOVS r0, #speed`), preserving critical SRAM pointer literal pools (`0x3440` / `0x3C80`) to eliminate HardFault crashes and bricking risks.
-- **🔒 Automated CRC-16 Recalculation:** Recomputes the big-endian CRC-16-CCITT checksum over the protected region `[0x100 : 0x8D00)` (35,840 bytes) and rewrites offset `0xB0` to satisfy bootloader integrity checks.
-- **🔍 Automated Binary Analyzer:** Identifies device markers (`SZMC-ES-02664-LQ`), verifies CRC-16 header validity, detects OTA signature blocks, and presents a real-time Thumb-2 disassembly view.
-- **⚡ Instant ST-Link Image Generator:** Generates a ready-to-flash 64 KB binary image (`.bin`) with valid vector tables mapped to base address `0x08000000`.
-- **🔌 Hardware Flashing Guide (SWD / ST-Link):** Step-by-step instructions and command-line scripts (`OpenOCD`, `st-flash`, `pyOCD`) for removing factory Readout Protection (RDP Level 1) and writing custom firmware.
+Подготовлен для развертывания на **GitHub** и мгновенного хостинга в **Streamlit Community Cloud**.
 
 ---
 
-## 🧠 Reverse Engineering Specifications (CONFIRMED)
+## ⚡ Быстрый старт (Хостинг на Streamlit Cloud)
 
-| Parameter | Value | Status |
-| :--- | :--- | :--- |
-| **Platform** | Brightway / SZMC (`SZMC-ES-02664-LQ`) | **CONFIRMED** |
-| **Target Vehicle** | Xiaomi Electric Scooter 5 Plus (`xiaomi.scooter.5plus`) | **CONFIRMED** |
-| **Firmware Build** | `WZKPA81223 V100` | **CONFIRMED** |
-| **Device Marker** | File Offset `0x90` (`SZMC-ES-02664-LQ`) | **CONFIRMED** |
-| **Protected Region** | `[0x100 : 0x8D00)` (35,840 bytes) | **CONFIRMED** |
-| **CRC-16 Location** | File Offset `0xB0` (2 bytes, big-endian) | **CONFIRMED** |
-| **Speed Hook Offset** | File Offset `0x5C74` (Signature: `AB 49 78 7A 08 80`) | **CONFIRMED** |
-| **Runtime Speed RAM** | `0x20000234` (1 writer at `0x5C74`, 3 reads) | **CONFIRMED** |
-| **SPEED_CONTROL Block**| `0x3698 – 0x3964` (`(val * 174) / 10` ramp & clamp) | **CONFIRMED** |
+### Способ 1: Запуск на Streamlit Community Cloud
+1. Сделайте **Fork** или создайте новый репозиторий на GitHub с файлами из этой папки.
+2. Перейдите на [share.streamlit.io](https://share.streamlit.io) и авторизуйтесь через GitHub.
+3. Нажмите **"New app"** -> Выберите ваш репозиторий -> Укажите основной файл: `streamlit_app.py`.
+4. Нажмите **"Deploy"**! Ваше веб-приложение станет доступно публично через пару секунд.
 
----
-
-## 🚀 Getting Started
-
-### 1. Running Locally with Streamlit
-
-Clone the repository and install requirements:
-
+### Способ 2: Локальный запуск на компьютере
 ```bash
-git clone https://github.com/your-username/xiaomi-5plus-patcher.git
-cd xiaomi-5plus-patcher
+# Клонируйте репозиторий
+git clone https://github.com/your-username/xiaomi-5plus-firmware-patcher.git
+cd xiaomi-5plus-firmware-patcher
 
-# Install dependencies
+# Установите зависимости
 pip install -r requirements.txt
 
-# Launch the Streamlit application
-streamlit run main.py
+# Запустите веб-интерфейс Streamlit
+streamlit run streamlit_app.py
 ```
-
-The web dashboard will open at `http://localhost:8501`.
-
-### 2. Deploying to Streamlit Cloud
-
-1. Fork or push this repository to your GitHub account.
-2. Go to [share.streamlit.io](https://share.streamlit.io/) and create a new app.
-3. Select your repository, branch, and set **Main file path** to `main.py`.
-4. Deploy! All dependencies in `requirements.txt` will install automatically.
+Приложение откроется по адресу: `http://localhost:8501`.
 
 ---
 
-## 🔌 Hardware Flashing Guide (ST-Link V2 / SWD)
+## 🔬 Что патчится в прошивке (Реальные адреса ARM Thumb-2)
 
-### 1. Controller Board Pinout (4-Pin SWD)
+Патчер работает напрямую с дампом памяти Flash ROM размером **125,371 байт**:
 
-Locate the 4 debug test pads on the ESC controller board inside the scooter deck:
+| Смещение | Инструкция в стоке | Патч (Пример 35 км/ч) | Описание |
+|---|---|---|---|
+| `0x00005C76` | `78 7A` (`LDRB r0, [r7, #9]`) | `23 20` (`MOVS r0, #35`) | **Ограничение скорости Sport** — замена чтения структуры константой |
+| `0x00005C9E` | `78 7B` (`LDRB r0, [r7, #11]`) | `00 20` (`MOVS r0, #0`) | **Отключение KERS (Свободный накат 0A)** |
+| `0x00005C74` | `AB 49 78 7A 08 80` | *Сигнатура проверки* | Контрольная сигнатура Thumb-2 перед внесением изменений |
 
-| ESC Board Pad | ST-Link V2 Pin | Description |
-| :--- | :--- | :--- |
-| **GND** | `GND` | Common Ground (Pin 1) |
-| **SWDIO** | `SWDIO` | Data line (Pin 2) |
-| **SWCLK** | `SWCLK` | Clock line (Pin 3) |
-| **3.3V (VCC)** | `3.3V` | 3.3V Logic Power (Pin 4) |
+---
 
-### 2. Flashing via Command Line (`st-flash` & `OpenOCD`)
+## ⚠️ ВАЖНО: Предотвращение бутлупа (Anti-Brick Protocol)
 
-```bash
-# 1. Verify connection to the ARM Cortex-M target
-st-info --probe
+> **НЕ ШЕЙТЕ МОДИФИЦИРОВАННЫЙ .BIN ЧЕРЕЗ ОФИЦИАЛЬНОЕ ПРИЛОЖЕНИЕ ИЛИ СТАНДАРТНЫЙ BLUETOOTH OTA!**
 
-# 2. Disable factory Readout Protection (RDP Level 1)
-# Note: Unlocking RDP will erase existing protected Flash memory
-openocd -f interface/stlink.cfg -f target/stm32f1x.cfg -c "init; reset halt; stm32f1x unlock 0; reset halt; exit"
+1. **Заводской загрузчик (Bootloader)** контроллера Brightway при старте верифицирует целостность Flash ROM (по контрольной сумме или цифровой подписи сертификата в конце файла `0x01E900`).
+2. При изменении байтов контрольная сумма меняется, и штатный загрузчик может уйти в **Bootloop (вечную перезагрузку / отказ запуска)**.
+3. **Безопасная прошивка возможна только через программатор ST-Link v2 / J-Link** по интерфейсу **SWD**:
+   * Разберите деку и найдите на плате контроллера 4 контакта: `SWDIO`, `SWCLK`, `GND`, `3.3V`.
+   * **ОБЯЗАТЕЛЬНО сохраните полный заводской дамп чипа** перед любой записью:
+     ```bash
+     openocd -f interface/stlink.cfg -f target/stm32f1x.cfg -c "init; reset halt; dump_image stock_backup.bin 0x08000000 0x20000; exit"
+     ```
+   * Имея `stock_backup.bin`, вы всегда сможете восстановить самокат за 1 минуту при любой ошибке.
 
-# 3. Write the patched firmware binary to base address 0x08000000
-st-flash --reset write xiaomi_5plus_patched_35kmh_crc_fixed.bin 0x08000000
+---
 
-# 4. Verify data integrity
-st-flash verify xiaomi_5plus_patched_35kmh_crc_fixed.bin 0x08000000
+## 📂 Структура репозитория
 ```
-
----
-
-## ⚖️ Disclaimer
-
-This tool is provided for educational and reverse-engineering research purposes only. Modifying scooter firmware and altering maximum speed limits may void manufacturer warranty, exceed local traffic regulations, and place additional thermal stress on battery/FET components. Use at your own risk.
-
----
-
-## 📄 License
-
-Distributed under the MIT License. See `LICENSE` for more information.
+.
+├── streamlit_app.py        # Основное веб-приложение Streamlit
+├── requirements.txt        # Python-зависимости (streamlit, altair, numpy)
+├── .streamlit/
+│   └── config.toml         # Тёмная тема и настройки сервера Streamlit
+├── README.md               # Документация и инструкция
+└── .gitignore              # Исключения Git
+```
