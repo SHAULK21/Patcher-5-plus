@@ -44,19 +44,21 @@ For `0x200002DC`, all eight literal XREFs in the reference firmware were traced:
 |---|---:|---|---|
 | `0x1574` | `0x142A` | word read | loads the 32-bit field |
 | `0x2F98` | `0x2D56` | word read | loads the 32-bit field |
-| `0x339C` | `0x3046` | **word write at `0x3048`** | initializes the field from code/flash address `0x0800F800` |
+| `0x339C` | `0x3046` | word read | loads the 32-bit field |
 | `0x3C94` | `0x3B0E` | word read | loads the 32-bit field |
 | `0x4314` | `0x3FAA` | word read | loads the 32-bit field |
 | `0x4958` | `0x47F6` | word read | loads the 32-bit field |
-| `0x5F6C` | `0x5E22` | word read/write use | field is used as a 32-bit object in this path |
+| `0x5F6C` | `0x5E22` | **word write at `0x5E26`** | writes a 32-bit value derived from packet/input data |
 | `0x6134` | `0x60B6` | word read | loads the 32-bit field |
 
-Critically, **there are no direct `STRB` writers to `0x200002DC` among these literal XREFs**. The confirmed writer at `0x3048` is a 32-bit `STR`, not a byte write. The source loaded before it is the word at flash address `0x0800F800`; the reference bytes there are `59 48 00 78` (`0x78004859`). Therefore this field currently looks like a 32-bit global/object/code-derived value, not a simple `0/1/2` mode byte.
+There are **no direct `STRB` writers** to `0x200002DC` in the literal-XREF set. The only confirmed direct writer is the 32-bit `STR r1,[r2]` at `0x5E26`, where `r2 = 0x200002DC`. The value in `r1` is assembled immediately beforehand from input/packet bytes and is not a literal `0/1/2` assignment.
+
+The `0x3046` reference is a read, not a write: `0x3046` loads the pointer to `0x200002DC`, then `0x3048` performs `LDR r0,[r0]`. Therefore it must not be described as an initializer/writer.
 
 The actual byte compared with `1` at `0x3FA0` is `0x200001DE`. That field has references elsewhere, including halfword writes around `0x30F0`, so it is also **not yet proven** to be Eco/Drive/Sport. Further writer/value tracing is required before adding a mode patch.
 
 ### Current conclusion
-- `0x200002DC`: **not mode selector; 0/1/2 mapping not found**.
+- `0x200002DC`: **not mode selector; no 0/1/2 mapping found; one 32-bit input-derived writer at `0x5E26`**.
 - `0x200001DE`: **stronger state candidate**, because `0x3FA0` reads its byte and compares it with `1`, but semantic mapping is still unverified.
 - `0x20001E2C`: real RAM field, semantics unverified.
 
