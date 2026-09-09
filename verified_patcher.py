@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
-"""Evidence-first Xiaomi Electric Scooter 5 Plus patcher core.
-
-Merged from the verified BW-Patched work. No synthetic 64 KiB image is created.
-"""
+"""Evidence-first Xiaomi Electric Scooter 5 Plus patcher core."""
 from __future__ import annotations
 
 import hashlib
@@ -33,7 +30,6 @@ def crc16_ccitt(data: bytes) -> int:
 
 
 def _ldr_literal_targets(data: bytes):
-    """Return (offset, register, literal_value, literal_offset) for Thumb LDR literal forms."""
     out = []
     for off in range(0, len(data) - 3, 2):
         op = int.from_bytes(data[off:off+2], "little")
@@ -54,47 +50,42 @@ def _thumb16(data: bytes, off: int) -> int:
 
 
 def trace_ram_field(data: bytes, address: int):
-    """Evidence-only XREF report for a RAM address.
-
-    For 0x200002DC this finds every literal reference and classifies the
-    immediately following memory operation. It does not infer semantics.
-    """
+    """Trace all literal XREFs and classify the immediate Thumb memory operation."""
     refs = []
     for off, reg, value, lit_off in _ldr_literal_targets(data):
         if value != address:
             continue
-        op_next = _thumb16(data, off + 2)
-        op_next2 = _thumb16(data, off + 4)
+        op = _thumb16(data, off + 2)
         item = {
             "instruction": off,
             "register": reg,
             "literal": lit_off,
             "address": address,
-            "next_opcode": op_next,
-            "next2_opcode": op_next2,
+            "next_opcode": op,
             "access": "unknown",
         }
-        # LDR Rt,[Rn] / LDRB Rt,[Rn] / STR Rt,[Rn] / STRB Rt,[Rn]
-        if op_next == 0x6800 | (reg << 3):
-            item["access"] = "read_word"
-        elif op_next == 0x7800 | (reg << 3):
-            item["access"] = "read_byte"
-        elif op_next == 0x6000 | (reg << 3):
-            item["access"] = "write_word"
-            item["writer_source"] = "next instruction must be inspected for value"
-        elif op_next == 0x7000 | (reg << 3):
-            item["access"] = "write_byte"
-        elif op_next == 0x8800 | (reg << 3):
-            item["access"] = "read_halfword"
-        elif op_next == 0x8000 | (reg << 3):
-            item["access"] = "write_halfword"
-        return_ref = item
-        refs.append(return_ref)
+        # Register-offset/immediate-zero Thumb forms.
+        cls = op & 0xF800
+        rn = (op >> 3) & 7
+        rt = op & 7
+        if rn == reg:
+            if cls == 0x6800:
+                item["access"] = f"read_word_r{rt}"
+            elif cls == 0x7800:
+                item["access"] = f"read_byte_r{rt}"
+            elif cls == 0x6000:
+                item["access"] = f"write_word_r{rt}"
+            elif cls == 0x7000:
+                item["access"] = f"write_byte_r{rt}"
+            elif cls == 0x8800:
+                item["access"] = f"read_halfword_r{rt}"
+            elif cls == 0x8000:
+                item["access"] = f"write_halfword_r{rt}"
+        refs.append(item)
     return refs
 
 
 def trace_mode_candidate(data: bytes):
-    """Trace the currently stronger mode candidate without claiming a mapping."""
     refs = []
     for off, reg, value, lit_off in _ldr_literal_targets(data):
         if value == MODE_CANDIDATE:
@@ -124,11 +115,7 @@ class Analysis:
 
 
 class Mi5PlusPatcher:
-    """Verified 5 Plus patcher/analyzer.
-
-    Confirmed patch: file 0x5C76, LDRB r0,[r7,#9] -> MOVS r0,#speed.
-    Confirmed CRC: marker+0x70 for declared big-endian size, stored marker+0x20.
-    """
+    """Verified 5 Plus patcher/analyzer."""
 
     @staticmethod
     def _crc_layout(data: bytes):
@@ -208,7 +195,6 @@ class Mi5PlusPatcher:
 
     @classmethod
     def extract_ota_image(cls, raw: bytes) -> bytes:
-        """Strip only the validated MI EF TFOTA signed trailer."""
         a = cls.analyze(raw)
         if a["ota_trailer"] is None:
             return raw
@@ -222,8 +208,7 @@ class Mi5PlusPatcher:
 
     @classmethod
     def patch_and_extract(cls, raw: bytes, kmh: int):
-        patched = cls.patch_speed(raw, kmh)
-        return cls.extract_ota_image(patched)
+        return cls.extract_ota_image(cls.patch_speed(raw, kmh))
 
 
 if __name__ == "__main__":
