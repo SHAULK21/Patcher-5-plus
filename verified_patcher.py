@@ -18,7 +18,8 @@ FLASH_BASE = 0x08000000
 SPEED_HOOK = 0x5C76
 SPEED_SIG = b"\xAB\x49\x78\x7A\x08\x80"
 SPEED_RUNTIME = 0x20000234
-MODE_CANDIDATE = 0x200002DC
+MODE_CANDIDATE = 0x200001DE
+MODE_FIELD = 0x200002DC
 CRC_POLY = 0x1021
 
 
@@ -32,7 +33,7 @@ def crc16_ccitt(data: bytes) -> int:
 
 
 def _ldr_literal_targets(data: bytes):
-    """Return (offset, register, literal_address) for Thumb LDR literal forms."""
+    """Return (offset, register, literal_value, literal_offset) for Thumb LDR literal forms."""
     out = []
     for off in range(0, len(data) - 3, 2):
         op = int.from_bytes(data[off:off+2], "little")
@@ -46,6 +47,59 @@ def _ldr_literal_targets(data: bytes):
             value = int.from_bytes(data[lit_off:lit_off+4], "little")
             out.append((off, rt, value, lit_off))
     return out
+
+
+def _thumb16(data: bytes, off: int) -> int:
+    return int.from_bytes(data[off:off+2], "little") if off + 2 <= len(data) else -1
+
+
+def trace_ram_field(data: bytes, address: int):
+    """Evidence-only XREF report for a RAM address.
+
+    For 0x200002DC this finds every literal reference and classifies the
+    immediately following memory operation. It does not infer semantics.
+    """
+    refs = []
+    for off, reg, value, lit_off in _ldr_literal_targets(data):
+        if value != address:
+            continue
+        op_next = _thumb16(data, off + 2)
+        op_next2 = _thumb16(data, off + 4)
+        item = {
+            "instruction": off,
+            "register": reg,
+            "literal": lit_off,
+            "address": address,
+            "next_opcode": op_next,
+            "next2_opcode": op_next2,
+            "access": "unknown",
+        }
+        # LDR Rt,[Rn] / LDRB Rt,[Rn] / STR Rt,[Rn] / STRB Rt,[Rn]
+        if op_next == 0x6800 | (reg << 3):
+            item["access"] = "read_word"
+        elif op_next == 0x7800 | (reg << 3):
+            item["access"] = "read_byte"
+        elif op_next == 0x6000 | (reg << 3):
+            item["access"] = "write_word"
+            item["writer_source"] = "next instruction must be inspected for value"
+        elif op_next == 0x7000 | (reg << 3):
+            item["access"] = "write_byte"
+        elif op_next == 0x8800 | (reg << 3):
+            item["access"] = "read_halfword"
+        elif op_next == 0x8000 | (reg << 3):
+            item["access"] = "write_halfword"
+        return_ref = item
+        refs.append(return_ref)
+    return refs
+
+
+def trace_mode_candidate(data: bytes):
+    """Trace the currently stronger mode candidate without claiming a mapping."""
+    refs = []
+    for off, reg, value, lit_off in _ldr_literal_targets(data):
+        if value == MODE_CANDIDATE:
+            refs.append({"instruction": off, "register": reg, "literal": lit_off, "address": value})
+    return refs
 
 
 @dataclass
@@ -65,6 +119,8 @@ class Analysis:
     ota_trailer: int | None
     mode_candidate: int
     mode_xrefs: list
+    mode_field: int
+    mode_field_xrefs: list
 
 
 class Mi5PlusPatcher:
@@ -105,15 +161,6 @@ class Mi5PlusPatcher:
             pos = p + 1
         return hits
 
-    @staticmethod
-    def trace_mode_candidate(data: bytes):
-        """Trace literal references to 0x200002DC without inventing mode mapping."""
-        refs = []
-        for off, reg, value, lit_off in _ldr_literal_targets(data):
-            if value == MODE_CANDIDATE:
-                refs.append({"instruction": off, "register": reg, "literal": lit_off, "address": value})
-        return refs
-
     @classmethod
     def analyze(cls, data: bytes) -> dict:
         layout = cls._crc_layout(data)
@@ -140,7 +187,8 @@ class Mi5PlusPatcher:
             speed_hook=hook_hits[0][0] if len(hook_hits) == 1 else None,
             speed_state=hook_hits[0][1] if len(hook_hits) == 1 else "ambiguous_or_missing",
             ota_trailer=ota, mode_candidate=MODE_CANDIDATE,
-            mode_xrefs=cls.trace_mode_candidate(data)))
+            mode_xrefs=trace_mode_candidate(data), mode_field=MODE_FIELD,
+            mode_field_xrefs=trace_ram_field(data, MODE_FIELD)))
 
     @classmethod
     def patch_speed(cls, raw: bytes, kmh: int) -> bytes:
@@ -150,11 +198,11 @@ class Mi5PlusPatcher:
         hits = cls.find_speed_hook(data)
         if len(hits) != 1:
             raise ValueError(f"Speed hook is not unique: {len(hits)} candidates")
-        off, state = hits[0]
+        off, _state = hits[0]
         data[off:off+2] = bytes((int(kmh), 0x20))
         layout = cls._crc_layout(data)
         if layout:
-            marker, crc_off, start, end = layout
+            _marker, crc_off, start, end = layout
             data[crc_off:crc_off+2] = crc16_ccitt(data[start:end]).to_bytes(2, "big")
         return bytes(data)
 
