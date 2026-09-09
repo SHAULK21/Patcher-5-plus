@@ -1,75 +1,43 @@
 # 🛴 Xiaomi Electric Scooter 5 Plus — Firmware Studio & Patcher
 
-[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://share.streamlit.io)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Hardware](https://img.shields.io/badge/Target-Brightway%20MCU%20(ES32)-red.svg)](#)
+Verified firmware analyzer and patcher for Xiaomi Electric Scooter 5 Plus / Brightway `SZMC-ES-02664-LQ`.
 
-Интерактивный конфигуратор и дизассемблерный патчер прошивки для электросамоката **Xiaomi Electric Scooter 5 Plus** (контроллер **Brightway SZMC-ES-02664-LQ** на базе микроконтроллера **ES32 / ARM Cortex-M4**).
+## What is now verified
 
-Подготовлен для развертывания на **GitHub** и мгновенного хостинга в **Streamlit Community Cloud**.
+- Reference package: `125371` bytes, SHA-256 `bdcec9c57c53279a19c28e437003e06e11f441170a349f94f7fdb140edd33cf4`.
+- Device marker `SZMC-ES-02664-LQ` at `0x90`.
+- CRC-16-CCITT over the declared protected region; reference CRC `0xEC8C`.
+- Unique speed hook at `0x5C74`: `AB 49 78 7A 08 80`.
+- Patch point `0x5C76`: `78 7A` → `XX 20` (`MOVS r0,#XX`).
+- Runtime speed RAM address: `0x20000234`.
+- Speed-control path around `0x3698–0x3964`, including `value * 174 / 10` and the `0x20001E40` control object clamp.
+- OTA trailer marker `MI EF TFOTA` at `0x1E484`; validated extraction preserves the embedded firmware prefix and does not synthesize a 64 KiB image.
+- `0x200002DC` is now tracked as a mode/state candidate with XREF tracing, but Eco/Drive/Sport mapping remains deliberately unverified.
 
----
+## Usage
 
-## ⚡ Быстрый старт (Хостинг на Streamlit Cloud)
+The Streamlit app uses `verified_patcher.py`:
 
-### Способ 1: Запуск на Streamlit Community Cloud
-1. Сделайте **Fork** или создайте новый репозиторий на GitHub с файлами из этой папки.
-2. Перейдите на [share.streamlit.io](https://share.streamlit.io) и авторизуйтесь через GitHub.
-3. Нажмите **"New app"** -> Выберите ваш репозиторий -> Укажите основной файл: `streamlit_app.py`.
-4. Нажмите **"Deploy"**! Ваше веб-приложение станет доступно публично через пару секунд.
-
-### Способ 2: Локальный запуск на компьютере
 ```bash
-# Клонируйте репозиторий
-git clone https://github.com/your-username/xiaomi-5plus-firmware-patcher.git
-cd xiaomi-5plus-firmware-patcher
-
-# Установите зависимости
 pip install -r requirements.txt
-
-# Запустите веб-интерфейс Streamlit
 streamlit run streamlit_app.py
 ```
-Приложение откроется по адресу: `http://localhost:8501`.
 
----
+Upload the original `.bin`/`.ota`, inspect the report, choose a speed, and generate a patched file. CRC is recalculated automatically.
 
-## 🔬 Что патчится в прошивке (Реальные адреса ARM Thumb-2)
+CLI:
 
-Патчер работает напрямую с дампом памяти Flash ROM размером **125,371 байт**:
-
-| Смещение | Инструкция в стоке | Патч (Пример 35 км/ч) | Описание |
-|---|---|---|---|
-| `0x00005C76` | `78 7A` (`LDRB r0, [r7, #9]`) | `23 20` (`MOVS r0, #35`) | **Ограничение скорости Sport** — замена чтения структуры константой |
-| `0x00005C9E` | `78 7B` (`LDRB r0, [r7, #11]`) | `00 20` (`MOVS r0, #0`) | **Отключение KERS (Свободный накат 0A)** |
-| `0x00005C74` | `AB 49 78 7A 08 80` | *Сигнатура проверки* | Контрольная сигнатура Thumb-2 перед внесением изменений |
-
----
-
-## ⚠️ ВАЖНО: Предотвращение бутлупа (Anti-Brick Protocol)
-
-> **НЕ ШЕЙТЕ МОДИФИЦИРОВАННЫЙ .BIN ЧЕРЕЗ ОФИЦИАЛЬНОЕ ПРИЛОЖЕНИЕ ИЛИ СТАНДАРТНЫЙ BLUETOOTH OTA!**
-
-1. **Заводской загрузчик (Bootloader)** контроллера Brightway при старте верифицирует целостность Flash ROM (по контрольной сумме или цифровой подписи сертификата в конце файла `0x01E900`).
-2. При изменении байтов контрольная сумма меняется, и штатный загрузчик может уйти в **Bootloop (вечную перезагрузку / отказ запуска)**.
-3. **Безопасная прошивка возможна только через программатор ST-Link v2 / J-Link** по интерфейсу **SWD**:
-   * Разберите деку и найдите на плате контроллера 4 контакта: `SWDIO`, `SWCLK`, `GND`, `3.3V`.
-   * **ОБЯЗАТЕЛЬНО сохраните полный заводской дамп чипа** перед любой записью:
-     ```bash
-     openocd -f interface/stlink.cfg -f target/stm32f1x.cfg -c "init; reset halt; dump_image stock_backup.bin 0x08000000 0x20000; exit"
-     ```
-   * Имея `stock_backup.bin`, вы всегда сможете восстановить самокат за 1 минуту при любой ошибке.
-
----
-
-## 📂 Структура репозитория
+```bash
+python verified_patcher.py input.bin output.bin --speed 35
+python verified_patcher.py input.bin image.bin --speed 35 --extract
 ```
-.
-├── streamlit_app.py        # Основное веб-приложение Streamlit
-├── requirements.txt        # Python-зависимости (streamlit, altair, numpy)
-├── .streamlit/
-│   └── config.toml         # Тёмная тема и настройки сервера Streamlit
-├── README.md               # Документация и инструкция
-└── .gitignore              # Исключения Git
-```
+
+## Important corrections
+
+The old issue #39 signatures for `SIG_MODES` and `remove_speed_check` do not occur in the verified reference firmware, so they are not used by this patcher. Likewise, the old claim that `0x20001E2C` is definitively the Eco/Drive/Sport selector is not accepted without tracing writers.
+
+The project no longer creates artificial 64 KiB binaries with fabricated vector tables. A stripped embedded image is not automatically claimed to be a proven flashable raw dump; bootloader/addressing requirements must be established separately.
+
+## Safety
+
+Firmware modification can brick the controller and may affect vehicle safety. Keep an untouched factory backup. Do not treat static validation as proof that a generated image is safe to flash. Follow applicable local laws and use appropriate hardware recovery procedures.
