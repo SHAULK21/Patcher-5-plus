@@ -1,79 +1,89 @@
-# Xiaomi Scooter 5 Plus — Verified Reverse Engineering Specification
+# Xiaomi 5 Plus — byte evidence and unresolved hardware mapping
 
-## Reference firmware
-- File: `mcu_xiaomi.scooter.5plus.bin`
-- Size: `125371` bytes
-- SHA-256: `bdcec9c57c53279a19c28e437003e06e11f441170a349f94f7fdb140edd33cf4`
-- Device marker: `SZMC-ES-02664-LQ` at file offset `0x90`
+Reference SHA-256:
+bdcec9c57c53279a19c28e437003e06e11f441170a349f94f7fdb140edd33cf4
+Reference size: 125371 bytes.
 
-## Confirmed CRC
-- Size field: `marker - 0x0A`
-- CRC field: `marker + 0x20` (`0xB0` in the reference file)
-- Protected data: `marker + 0x70`, length from the size field
-- CRC-16-CCITT: poly `0x1021`, init `0x0000`, no reflection, xorout `0`
-- Reference stored CRC: `0xEC8C`
+The following byte observations came from the supplied original OTA during
+the audit. They do not establish hardware flashing or physical speed.
 
-## Confirmed speed path
-At file offset `0x5C74`:
+## Package structure
 
-```text
-AB 49 78 7A 08 80
-```
+| File offset | Observation |
+| --- | --- |
+| 0x0000 | Package header; not a normal Cortex-M vector table |
+| 0x000A | EU1 tag |
+| 0x0018 | BU1 tag |
+| 0x0090 | SZMC-ES-02664-LQ marker |
+| 0x0086 | Big-endian length 0x8C00 |
+| 0x00B0 | CRC 0xEC8C over [0x100,0x8D00) |
+| 0x0100 | Vector-like data: SP=0x20002280, reset value=0x000000D5 |
+| 0x8D00 | Another vector-like region: SP=0x20003B78, reset=0x0800315D |
+| 0x1E484 | MI EF TFOTA marker, model and certificate material |
 
-`0x5C76` is `LDRB r0,[r7,#9]`; `0x5C78` is `STRH r0,[r1]`. The literal used by the surrounding path resolves to runtime RAM `0x20000234`. The hook is uniquely detected in the reference firmware.
+The different reset address conventions suggest a multi-component container.
+It is not established which component is the primary motor controller and
+whether the first component is linked at zero/remapped or another address.
+The blanket formula MCU=0x08000000+file_offset is not valid evidence.
+Removing the trailer leaves 124036 bytes including the package header and
+multiple regions; it does not create a proven raw MCU flash image.
 
-A speed patch changes only the two opcode bytes at `0x5C76`:
+## Confirmed local hook instructions
 
-```text
-78 7A  ->  XX 20
-```
+| File offset | Bytes | Thumb instruction |
+| --- | --- | --- |
+| 0x5C74 | AB 49 | LDR r1,[PC,#0x2AC] |
+| 0x5C76 | 78 7A | LDRB r0,[r7,#9] |
+| 0x5C78 | 08 80 | STRH r0,[r1] |
+| 0x5C7A | AB 48 | LDR r0,[PC,#0x2AC] |
+| 0x5C7C | 40 7A | LDRB r0,[r0,#9] |
+| 0x5C7E | 06 28 | CMP r0,#6 |
+| 0x5C80 | 02 D9 | BLS (file target 0x5C88) |
 
-where `XX` is the requested integer speed, followed by automatic CRC recalculation.
+For the first LDR, aligned PC plus displacement resolves to file offset
+0x5F24; its literal is 34 02 00 20 = RAM 0x20000234.
+The replacement XX 20 is MOVS r0,#XX. It changes flags, unlike LDRB.
+In this local straight-line sequence CMP at 0x5C7E overwrites N/Z/C/V before
+the visible conditional branch. This observation does not replace a complete
+control-flow, interrupt and runtime analysis.
 
-## Confirmed speed-control block
-The controller-speed path is in the approximate file range `0x3698–0x3964`. The runtime speed value is transformed using the confirmed `value * 174 / 10` calculation and participates in fields at offsets `+0x14` and `+0x18` of control object `0x20001E40`, including an upper clamp.
+35 produces 23 20 at 0x5C76 and CRC 0x9DB1 at 0xB0.
+The audit found four actual changed bytes for this variant.
+The browser's former output left the old CRC and was invalid.
 
-## Mode research — corrected after full 0x200002DC XREF trace
-`0x20001E2C` is a real RAM field with writes, but its Eco/Drive/Sport semantics are **not proven**.
+## Rejected KERS patch
 
-`0x200002DC` is **not a proven mode selector** and the earlier claim that file offset `0x3FA0` reads this address was incorrect. The actual code at `0x3FA0` loads the byte from **`0x200001DE`** (`LDRB r1,[0x200001DE]`) and compares it with `1`.
+Stock bytes at 0x5C9E are **42 54 = STRB r2,[r0,r1]**, not 78 7B.
+Immediately before, 0x5C9C contains 5A 22 = MOVS r2,#90.
+Replacing the STRB with MOVS r0,#0 removes a memory write and changes r0.
+There is no evidence this is a safe regenerative-braking modification.
+Both disabling and weakening KERS are blocked.
 
-For `0x200002DC`, all eight literal XREFs in the reference firmware were traced:
+## Unproven semantics
 
-| Literal | Code XREF | Access | Finding |
-|---|---:|---|---|
-| `0x1574` | `0x142A` | word read | loads the 32-bit field |
-| `0x2F98` | `0x2D56` | word read | loads the 32-bit field |
-| `0x339C` | `0x3046` | word read | loads the 32-bit field |
-| `0x3C94` | `0x3B0E` | word read | loads the 32-bit field |
-| `0x4314` | `0x3FAA` | word read | loads the 32-bit field |
-| `0x4958` | `0x47F6` | word read | loads the 32-bit field |
-| `0x5F6C` | `0x5E22` | **word write at `0x5E26`** | writes a 32-bit value derived from packet/input data |
-| `0x6134` | `0x60B6` | word read | loads the 32-bit field |
+- Raw parameter XX is not independently established as physical km/h.
+- Per-mode Eco/Drive/Sport behaviour is not established.
+- 0x200002DC has a word input-derived writer, not a proven 0/1/2 mode enum.
+- 0x200001DE and 0x20001E2C are fields requiring runtime writer/value tracing.
+- The previous claimed scaling at 0x5C8C is wrong for this package:
+  bytes there are 05 60 = STR r5,[r0], not a multiplication.
+- A certificate marker is not proof of successful signature verification.
+- CRC checks do not verify digital signatures or authenticate a changed OTA.
 
-There are **no direct `STRB` writers** to `0x200002DC` in the literal-XREF set. The only confirmed direct writer is the 32-bit `STR r1,[r2]` at `0x5E26`, where `r2 = 0x200002DC`. The value in `r1` is assembled immediately beforehand from input/packet bytes and is not a literal `0/1/2` assignment.
+## Implemented trust boundary
 
-The `0x3046` reference is a read, not a write: `0x3046` loads the pointer to `0x200002DC`, then `0x3048` performs `LDR r0,[r0]`. Therefore it must not be described as an initializer/writer.
+The untouched entire-package SHA-256 pins all surrounding code, data and
+metadata. Structural checks validate the full unique pattern, RAM literal,
+declared CRC layout and trailer. Output validation compares every byte with
+the original and permits only the instruction pair and CRC pair to differ.
+No wildcard fallback or force switch is provided. KERS and hardware image
+extraction are blocked. Signed trailer bytes are preserved, but the modified
+package is not presented as authenticated or flashable.
 
-The actual byte compared with `1` at `0x3FA0` is `0x200001DE`. That field has references elsewhere, including halfword writes around `0x30F0`, so it is also **not yet proven** to be Eco/Drive/Sport. Further writer/value tracing is required before adding a mode patch.
+## Required evidence to finish hardware support
 
-### Current conclusion
-- `0x200002DC`: **not mode selector; no 0/1/2 mapping found; one 32-bit input-derived writer at `0x5E26`**.
-- `0x200001DE`: **stronger state candidate**, because `0x3FA0` reads its byte and compares it with `1`, but semantic mapping is still unverified.
-- `0x20001E2C`: real RAM field, semantics unverified.
-
-The project must not claim `0=Eco, 1=Drive, 2=Sport` for any of these fields without runtime/state evidence.
-
-## Rejected claims
-- The old `SIG_MODES = ?? 49 09 88 ?? E7 01 88 ?? E7` signature from bw-flasher issue #39 is not present in the reference firmware.
-- The old `remove_speed_check` signature `00 88 09 B2 81 42 00 DD A0 82` is not present in the reference firmware.
-- `0x200002E5 == 1 -> 435` is reversed: the observed branch sends `!= 1` to the `435` fallback; `== 1` takes the configured-speed path.
-- `r7` being an active-profile pointer is not proven; in the relevant path it is loaded from a RAM literal associated with `0x200002B7`.
-- `0x200002DC` being an Eco/Drive/Sport selector is rejected by the current XREF evidence.
-- Synthetic 64 KiB images with fabricated vector tables are not valid evidence of a flashable raw image and are no longer generated by this project.
-
-## OTA extraction
-The signed OTA package has a unique `MI EF TFOTA` marker at file offset `0x1E484`. The embedded image is the validated prefix before that marker (`124036` bytes for the reference file). Extraction strips the trailer only; it does not rewrite firmware bytes or fabricate a flash layout.
-
-## Safety / flashing status
-Static binary validation and patch generation are implemented. A generated embedded image is **not** claimed to be independently proven flashable until bootloader address mapping, image size expectations and hardware recovery procedures are verified.
+Identify component targets and exact MCU revisions; obtain and compare a
+complete factory dump with the OTA payloads; establish load/erase boundaries,
+bootloader validation and recovery; trace parameter writers and consumers;
+then verify modes, braking and fault handling on a recoverable test device.
+The software currently creates research packages only.

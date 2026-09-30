@@ -1,43 +1,85 @@
-# 🛴 Xiaomi Electric Scooter 5 Plus — Firmware Studio & Patcher
+# Xiaomi 5 Plus — strict reference patcher
 
-Verified firmware analyzer and patcher for Xiaomi Electric Scooter 5 Plus / Brightway `SZMC-ES-02664-LQ`.
+This program really replaces the reference instruction at file offset 0x5C76
+and recalculates the embedded CRC. It is a **research package patcher**, not a
+verified scooter flasher. Static validation cannot establish physical speed,
+mode behaviour, controller safety, OTA acceptance or hardware flash addressing.
 
-## What is now verified
+## Supported input
 
-- Reference package: `125371` bytes, SHA-256 `bdcec9c57c53279a19c28e437003e06e11f441170a349f94f7fdb140edd33cf4`.
-- Device marker `SZMC-ES-02664-LQ` at `0x90`.
-- CRC-16-CCITT over the declared protected region; reference CRC `0xEC8C`.
-- Unique speed hook at `0x5C74`: `AB 49 78 7A 08 80`.
-- Patch point `0x5C76`: `78 7A` → `XX 20` (`MOVS r0,#XX`).
-- Runtime speed RAM address: `0x20000234`.
-- Speed-control path around `0x3698–0x3964`, including `value * 174 / 10` and the `0x20001E40` control object clamp.
-- OTA trailer marker `MI EF TFOTA` at `0x1E484`; validated extraction preserves the embedded firmware prefix and does not synthesize a 64 KiB image.
-- `0x200002DC` is now tracked as a mode/state candidate with XREF tracing, but Eco/Drive/Sport mapping remains deliberately unverified.
+Only the untouched complete package is accepted:
+- Size: 125371 bytes.
+- SHA-256: bdcec9c57c53279a19c28e437003e06e11f441170a349f94f7fdb140edd33cf4.
+- Hook: AB 49 78 7A 08 80 at 0x5C74.
+- CRC field: 0xB0..0xB1, big endian.
+- CRC coverage: [0x100, 0x8D00), CRC-16/XMODEM (poly 0x1021, init 0).
+- LDR literal at 0x5F24: 0x20000234.
+- OTA trailer: 0x1E484.
 
-## Usage
+Unknown versions, raw dumps, truncated packages, altered inputs and already
+patched outputs are rejected. Always generate each variant from the original.
+Values 1..60 are raw parameters; this bound is an application limit, not a
+proven safe speed range.
 
-The Streamlit app uses `verified_patcher.py`:
+## Run
 
-```bash
-pip install -r requirements.txt
-streamlit run streamlit_app.py
-```
+Python needs no third-party dependencies for patching:
 
-Upload the original `.bin`/`.ota`, inspect the report, choose a speed, and generate a patched file. CRC is recalculated automatically.
+    python verified_patcher.py original.bin
+    python verified_patcher.py original.bin parameter35.research.bin --parameter 35
 
-CLI:
+The second command writes an exclusively created output and a JSON manifest
+with hashes and all actual changed offsets. Input files are never overwritten.
+Only 0x5C76..0x5C77 and CRC bytes 0xB0..0xB1 may change. KERS, the other
+component and the signed trailer stay byte-for-byte unchanged.
 
-```bash
-python verified_patcher.py input.bin output.bin --speed 35
-python verified_patcher.py input.bin image.bin --speed 35 --extract
-```
+For the browser interface:
 
-## Important corrections
+    npm install
+    npm run dev
 
-The old issue #39 signatures for `SIG_MODES` and `remove_speed_check` do not occur in the verified reference firmware, so they are not used by this patcher. Likewise, the old claim that `0x20001E2C` is definitively the Eco/Drive/Sport selector is not accepted without tracing writers.
+For Streamlit:
 
-The project no longer creates artificial 64 KiB binaries with fabricated vector tables. A stripped embedded image is not automatically claimed to be a proven flashable raw dump; bootloader/addressing requirements must be established separately.
+    pip install -r requirements.txt
+    streamlit run streamlit_app.py
 
-## Safety
+All active patch panels use strict validation. The previous independent
+patch writers, unsafe generated scripts and fabricated sample workflows have
+been retired from the application.
 
-Firmware modification can brick the controller and may affect vehicle safety. Keep an untouched factory backup. Do not treat static validation as proof that a generated image is safe to flash. Follow applicable local laws and use appropriate hardware recovery procedures.
+## Reverse engineering
+
+    pip install 'capstone>=5,<6'
+    python tools/reverse_report.py original.bin > reverse-report.json
+
+This read-only tool independently disassembles selected known instruction
+windows and reports **file offsets**, never invented physical MCU addresses.
+See XIAOMI_5PLUS_RE_SPEC.md for verified bytes and unresolved questions.
+
+## Tests
+
+    python -m unittest discover -s tests -v
+    npx tsx --test tests/patcher.test.ts
+    npm run build
+
+The original firmware is not committed or downloaded by CI. Positive Python
+guard/patch tests use a clearly labelled synthetic fixture and a test-only
+reference hash. Production still rejects that fixture. Actual reference
+integration tests are skipped unless REFERENCE_FW points to the original:
+
+    REFERENCE_FW=/absolute/path/original.bin python -m unittest discover -s tests -v
+    REFERENCE_FW=/absolute/path/original.bin npx tsx --test tests/patcher.test.ts
+
+On Windows PowerShell set $env:REFERENCE_FW to the original file path first.
+
+## Flashing status
+
+- KERS patch is blocked: stock 0x5C9E is 42 54, STRB r2,[r0,r1].
+- Extracting an OTA prefix as a raw hardware image is blocked.
+- The output retains the original signature material; it is **not re-signed**.
+  A recalculated CRC is not a new digital signature. Do not use the stock OTA updater.
+- Two vector-like regions and component headers are present. Neither the
+  complete OTA nor its stripped prefix is proven to map to a single flash image.
+- Safe hardware use requires identifying the exact components, MCU and
+  bootloader layout, comparing a complete factory dump and validating behaviour
+  on a recoverable test unit. No write/erase operation is provided here.
