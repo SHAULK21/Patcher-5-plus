@@ -63,7 +63,7 @@ class StrictPatcherTests(unittest.TestCase):
     def test_corruption_rejected_even_with_valid_crc(self):
         raw = synthetic_fixture()
         with patch.object(core, "REFERENCE_SHA256", hashlib.sha256(raw).hexdigest()):
-            for off in (0, 0x86, 0xB0, 0x200, 0x5C74, 0x5C78, 0x5F24, 0x5C9E, 0x8D00, 0x1E484):
+            for off in (0, 0x86, 0x200, 0x5C74, 0x5C78, 0x5F24, 0x5C9E, 0x8D00, 0x1E484):
                 corrupt = bytearray(raw)
                 corrupt[off] ^= 1
                 corrupt[0xB0:0xB2] = core.crc16_ccitt(corrupt[0x100:0x8D00]).to_bytes(2, "big")
@@ -81,6 +81,23 @@ class StrictPatcherTests(unittest.TestCase):
             output[0x5C76:0x5C78] = b"\x23\x20"
             with self.assertRaises(ValueError):
                 core.Mi5PlusPatcher.verify_output(raw, bytes(output), 35)
+
+    def test_independent_thumb_decode(self):
+        from capstone import Cs, CS_ARCH_ARM, CS_MODE_THUMB
+        md = Cs(CS_ARCH_ARM, CS_MODE_THUMB)
+        hook = list(md.disasm(core.SPEED_SIG, 0x5C74))
+        self.assertEqual([i.mnemonic for i in hook], ["ldr", "ldrb", "strh"])
+        rejected = list(md.disasm(bytes.fromhex("42 54"), 0x5C9E))
+        self.assertEqual(rejected[0].mnemonic, "strb")
+        self.assertEqual(rejected[0].op_str, "r2, [r0, r1]")
+
+    def test_stale_input_crc_rejected(self):
+        raw = synthetic_fixture()
+        with patch.object(core, "REFERENCE_SHA256", hashlib.sha256(raw).hexdigest()):
+            corrupt = bytearray(raw)
+            corrupt[0xB0] ^= 1
+            with self.assertRaises(ValueError):
+                core.Mi5PlusPatcher.patch_speed(bytes(corrupt), 35)
 
     def test_unverified_extraction_always_refused(self):
         for data in (b"", synthetic_fixture()):
