@@ -1,6 +1,8 @@
 import sys
 import unittest
 from pathlib import Path
+from types import ModuleType
+from unittest.mock import patch
 
 from streamlit.testing.v1 import AppTest
 
@@ -9,6 +11,16 @@ sys.path.insert(0, str(ROOT))
 
 
 class StreamlitStartupTests(unittest.TestCase):
+    def test_main_ignores_cached_module_without_render_app(self):
+        stale = ModuleType("streamlit_app")
+        with patch.dict(sys.modules, {"streamlit_app": stale}):
+            app = AppTest.from_file(str(ROOT / "main.py")).run(timeout=20)
+            self.assertEqual(len(app.exception), 0)
+            self.assertEqual(len(app.title), 1)
+            app.run(timeout=20)
+            self.assertEqual(len(app.exception), 0)
+            self.assertEqual(len(app.title), 1)
+
     def test_both_entrypoints_render_after_rerun_and_in_new_sessions(self):
         for filename in ("main.py", "streamlit_app.py"):
             for session in range(2):
