@@ -21,4 +21,5 @@ jobs:
       - run: python -m py_compile verified_patcher.py streamlit_app.py tools/reverse_report.py
       - run: npm install --ignore-scripts --no-audit --no-fund
       - run: npx tsx --test tests/patcher.test.ts
+      - run: npx tsc --noEmit --project tsconfig.patcher.json
       - run: npm run build

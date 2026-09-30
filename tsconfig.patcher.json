@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "src/main.tsx",
+    "src/App.tsx",
+    "src/components/StrictStudio.tsx",
+    "src/utils/patcher.ts",
+    "src/types.ts",
+    "server.ts",
+    "tests/patcher.test.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist"
+  ]
+}
