@@ -1,5 +1,5 @@
-"""Compatibility entrypoint for Streamlit Cloud/local runs.
+"""Streamlit entrypoint. Render on every script rerun, even when imports are cached."""
+from streamlit_app import render_app
 
-The implementation now lives in streamlit_app.py and verified_patcher.py.
-"""
-from streamlit_app import *  # noqa: F401,F403
+if __name__ == "__main__":
+    render_app()
