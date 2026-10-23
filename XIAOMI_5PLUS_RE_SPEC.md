@@ -13,17 +13,22 @@ the audit. They do not establish hardware flashing or physical speed.
 | --- | --- |
 | 0x0000 | Package header; not a normal Cortex-M vector table |
 | 0x000A | EU1 tag |
+| 0x0011 | Little-endian outer A CRC 0xD51A over [0x80,0x8D00) |
 | 0x0018 | BU1 tag |
+| 0x001F | Little-endian B CRC 0x4D44 over [0x8D00,0x1E480) |
 | 0x0090 | SZMC-ES-02664-LQ marker |
 | 0x0086 | Big-endian length 0x8C00 |
 | 0x00B0 | CRC 0xEC8C over [0x100,0x8D00) |
 | 0x0100 | Vector-like data: SP=0x20002280, reset value=0x000000D5 |
 | 0x8D00 | Another vector-like region: SP=0x20003B78, reset=0x0800315D |
 | 0x1E484 | MI EF TFOTA marker, model and certificate material |
+| 0x1E4C6 | End of signed data, start of first PEM certificate |
+| 0x1E974 | 71-byte DER ECDSA signature; preceding byte is a newline |
 
-The different reset address conventions suggest a multi-component container.
-It is not established which component is the primary motor controller and
-whether the first component is linked at zero/remapped or another address.
+The vectors, startup literals and instruction alignment support analysis bases
+0 for component A and 0x08003000 for B. For A, file_offset = address + 0x100;
+for B, file_offset = address - 0x08003000 + 0x8D00. The physical Flash alias
+of A and the assignment of components to exact MCU/board revisions remain unknown.
 The blanket formula MCU=0x08000000+file_offset is not valid evidence.
 Removing the trailer leaves 124036 bytes including the package header and
 multiple regions; it does not create a proven raw MCU flash image.
@@ -47,9 +52,31 @@ In this local straight-line sequence CMP at 0x5C7E overwrites N/Z/C/V before
 the visible conditional branch. This observation does not replace a complete
 control-flow, interrupt and runtime analysis.
 
-35 produces 23 20 at 0x5C76 and CRC 0x9DB1 at 0xB0.
-The audit found four actual changed bytes for this variant.
-The browser's former output left the old CRC and was invalid.
+35 produces 23 20 at 0x5C76, inner CRC 0x9DB1 at 0xB0, and outer CRC
+0x8AC4 at 0x11 (little-endian bytes C4 8A). This changes six actual bytes.
+The earlier writer repaired only the inner CRC and left the outer 0xD51A stale.
+Both Python and TypeScript now repair the inner CRC first and the outer second,
+and reject that earlier four-byte output. CRC B is checked and remains unchanged.
+
+## Packet field and consumers
+
+At component-A address 0x50FC (file 0x51FC), the dispatcher handles a received
+message with packet[1]=0x12 and packet[2]=0x20. The hook copies packet[9] into
+halfword RAM 0x20000234. It is not proven that r7 points to an active-mode profile.
+The raw value is consumed around A addresses 0x1198, 0x1576 and 0x35F2.
+The function at A address 0x3598 compares against the value times 10 and
+calculates a limit as value*174/10 or a flag-selected constant 435. The field
+is a strong speed-reference/limit candidate; physical km/h and mode semantics
+remain unverified. RAM 0x20000229 takes a packet-derived value clamped to 0..2;
+mapping those values to Eco/Drive/Sport has not been established.
+
+## Cryptographic signature
+
+For the pinned original, ECDSA/SHA-256/P-256 over file[0:0x1E4C6] verifies
+under certificate 2. The leaf certificate verifies under certificate 1. No
+trusted Mijia Root is provided. `tools/verify_ota.py` performs these checks.
+Changing the hook or CRCs invalidates the original signature. Keeping certificate
+and signature bytes unchanged does not authenticate the modified package.
 
 ## Rejected KERS patch
 
@@ -75,7 +102,7 @@ Both disabling and weakening KERS are blocked.
 The untouched entire-package SHA-256 pins all surrounding code, data and
 metadata. Structural checks validate the full unique pattern, RAM literal,
 declared CRC layout and trailer. Output validation compares every byte with
-the original and permits only the instruction pair and CRC pair to differ.
+the original and permits only the instruction pair and both A CRC pairs to differ.
 No wildcard fallback or force switch is provided. KERS and hardware image
 extraction are blocked. Signed trailer bytes are preserved, but the modified
 package is not presented as authenticated or flashable.

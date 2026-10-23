@@ -47,9 +47,15 @@ def report(raw):
              "reset_value": int.from_bytes(raw[off+4:off+8], "little")}
             for off in (0x100, 0x8D00)
         ],
+        "component_layout": [
+            {"name": "A", "file_range": [0x100, 0x8D00], "analysis_base": 0},
+            {"name": "B", "file_range": [0x8D00, 0x1E480], "analysis_base": 0x08003000},
+        ],
+        "hook_source": {"received_message": [0x12, 0x20], "packet_byte_offset": 9},
+        "ota_signed_range": [0, 0x1E4C6],
+        "signature_verification": "not_performed; use tools/verify_ota.py",
         "limitations": [
-            "EU1/BU1 headers and different vector address conventions suggest multiple components.",
-            "Component function and physical flash mapping are not established.",
+            "Analysis bases are supported by vectors/startup; physical A alias and exact MCU revisions are unknown.",
             "Literal XREF scans can include data and second halves of Thumb-2 instructions.",
             "No proven Eco/Drive/Sport selector or KERS hook.",
             "No authenticated modified OTA or hardware flash image is produced.",

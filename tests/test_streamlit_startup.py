@@ -1,7 +1,9 @@
 import sys
+import hashlib
+import os
 import unittest
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from unittest.mock import patch
 
 from streamlit.testing.v1 import AppTest
@@ -11,6 +13,27 @@ sys.path.insert(0, str(ROOT))
 
 
 class StreamlitStartupTests(unittest.TestCase):
+    @unittest.skipUnless(os.environ.get("REFERENCE_FW"), "Set REFERENCE_FW for UI integration test")
+    def test_live_update_discards_legacy_artifact_and_repairs_all_crcs(self):
+        raw = Path(os.environ["REFERENCE_FW"]).read_bytes()
+        uploaded = SimpleNamespace(getvalue=lambda: raw)
+        with patch("streamlit.file_uploader", return_value=uploaded):
+            app = AppTest.from_file(str(ROOT / "streamlit_app.py"))
+            app.session_state["patch_artifact"] = {
+                "identity": (hashlib.sha256(raw).hexdigest(), 35),
+                "output": b"legacy output with stale CRC", "report": {"crc_valid": True},
+            }
+            app.run(timeout=20)
+            self.assertEqual(len(app.exception), 0)
+            self.assertNotIn("patch_artifact", app.session_state)
+            app.button[0].click().run(timeout=20)
+            self.assertEqual(len(app.exception), 0)
+            artifact = app.session_state["patch_artifact"]
+            self.assertEqual(artifact["report"]["schema_version"], 2)
+            self.assertTrue(artifact["report"]["crc_valid"])
+            self.assertEqual(artifact["output"][0x11:0x13], bytes.fromhex("C4 8A"))
+            self.assertEqual(artifact["output"][0x8D00:], raw[0x8D00:])
+
     def test_main_ignores_cached_module_without_render_app(self):
         stale = ModuleType("streamlit_app")
         with patch.dict(sys.modules, {"streamlit_app": stale}):
