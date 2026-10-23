@@ -40,9 +40,10 @@ export function StrictStudio() {
   return <main className="min-h-screen bg-slate-950 text-slate-100 p-6">
     <div className="max-w-3xl mx-auto space-y-6">
       <h1 className="text-2xl font-bold">Xiaomi 5 Plus — строгий патчер</h1>
-      <p>Изменяет подтверждённую инструкцию и пересчитывает CRC. Результат — исследовательский пакет.
+      <p>Изменяет подтверждённую инструкцию, пересчитывает внутреннюю и внешнюю CRC первого компонента
+        и проверяет CRC второго. Результат — исследовательский пакет.
         Возможность аппаратной прошивки и физическая скорость ещё не подтверждены.
-        Модифицированный файл не переподписывается для штатного OTA.</p>
+        Изменение нарушает исходную OTA-подпись; файл не переподписывается.</p>
       <section className="rounded-xl bg-slate-900 p-5 space-y-3">
         <p>Поддерживается только полный оригинал: {REFERENCE_SIZE.toLocaleString()} байт.</p>
         <p className="break-all text-xs font-mono">SHA-256: {REFERENCE_SHA256}</p>
@@ -60,6 +61,7 @@ export function StrictStudio() {
       </section>
       {status && <p role="status" className="break-words">{status}</p>}
       {result?.success && result.patchedBuffer && result.report && <section className="space-y-3">
+        <p>Все три CRC совпадают. Исходная OTA-подпись нарушена изменением данных.</p>
         <p>Готов исследовательский файл. Для штатного OTA и записи полного пакета в flash он не подтверждён.</p>
         <pre className="text-xs overflow-auto bg-slate-900 p-4">{JSON.stringify(result.report, null, 2)}</pre>
         <button className="bg-blue-700 rounded px-4 py-2" onClick={() =>

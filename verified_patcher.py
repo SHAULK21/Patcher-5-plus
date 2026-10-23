@@ -18,6 +18,15 @@ SPEED_RUNTIME = 0x20000234
 MODE_CANDIDATE = 0x200001DE
 MODE_FIELD = 0x200002DC
 CRC_POLY = 0x1021
+REPORT_SCHEMA_VERSION = 2
+OTA_SIGNED_END = 0x1E4C6
+# Ends are exclusive; the outer A CRC includes its header and inner CRC field.
+CRC_REGIONS = (
+    ("inner_component", 0xB0, 0x100, 0x8D00, "big"),
+    ("outer_component", 0x11, 0x80, 0x8D00, "little"),
+    ("second_component", 0x1F, 0x8D00, 0x1E480, "little"),
+)
+ALLOWED_CHANGED_OFFSETS = frozenset((0x11, 0x12, 0xB0, 0xB1, SPEED_HOOK, SPEED_HOOK + 1))
 
 
 def crc16_ccitt(data: bytes) -> int:
@@ -27,6 +36,30 @@ def crc16_ccitt(data: bytes) -> int:
         for _ in range(8):
             crc = (((crc << 1) ^ CRC_POLY) if crc & 0x8000 else (crc << 1)) & 0xFFFF
     return crc
+
+
+def check_component_crcs(data: bytes) -> dict:
+    """Check the three fixed regions of the supported package, without truncation."""
+    checks = {}
+    for name, field, start, end, endian in CRC_REGIONS:
+        complete = len(data) >= max(end, field + 2)
+        stored = int.from_bytes(data[field:field+2], endian) if complete else None
+        computed = crc16_ccitt(data[start:end]) if complete else None
+        checks[name] = {
+            "field_offset": field, "start": start, "end": end,
+            "byte_order": endian, "stored": stored, "computed": computed,
+            "valid": complete and stored == computed,
+        }
+    return checks
+
+
+def crc_status(checks: dict) -> dict:
+    return {
+        "component_crcs": checks,
+        **{name + "_crc_valid": check["valid"] for name, check in checks.items()},
+        "crc_valid": all(check["valid"] for check in checks.values()),
+        "crc_valid_scope": "all_three_component_checks",
+    }
 
 
 def _ldr_literal_targets(data: bytes):
@@ -168,7 +201,7 @@ class Mi5PlusPatcher:
             cert = data.find(CERT_MAGIC, ota)
             if not (ota < model < cert):
                 ota = None
-        return asdict(Analysis(
+        result = asdict(Analysis(
             size=len(data), sha256=hashlib.sha256(data).hexdigest(),
             known_reference=len(data) == REFERENCE_SIZE and hashlib.sha256(data).hexdigest() == REFERENCE_SHA256,
             marker_offset=marker, crc_offset=crc_off, crc_start=start, crc_end=end,
@@ -178,6 +211,8 @@ class Mi5PlusPatcher:
             ota_trailer=ota, mode_candidate=MODE_CANDIDATE,
             mode_xrefs=trace_mode_candidate(data), mode_field=MODE_FIELD,
             mode_field_xrefs=trace_ram_field(data, MODE_FIELD)))
+        result.update(crc_status(check_component_crcs(data)))
+        return result
 
     @classmethod
     def validate_reference(cls, raw: bytes) -> dict:
@@ -189,8 +224,9 @@ class Mi5PlusPatcher:
             raise ValueError("Unknown or modified SHA-256; use the untouched reference OTA")
         if cls._crc_layout(raw) != (0x90, 0xB0, 0x100, 0x8D00):
             raise ValueError("Unexpected protected region")
-        if not a["crc_valid"]:
-            raise ValueError("Input CRC is invalid")
+        for name, check in a["component_crcs"].items():
+            if not check["valid"]:
+                raise ValueError("Input " + name + " CRC is invalid")
         if cls.find_speed_hook(raw) != [(SPEED_HOOK, "stock")]:
             raise ValueError("Hook must be unique and at the verified offset")
         if raw[0x5C74:0x5C7A] != SPEED_SIG:
@@ -214,23 +250,30 @@ class Mi5PlusPatcher:
             raise ValueError("Parameter must be an integer from 1 to 60")
         if len(output) != len(raw):
             raise ValueError("Output size changed")
-        allowed = {0xB0, 0xB1, SPEED_HOOK, SPEED_HOOK + 1}
         changed = [i for i, (x, y) in enumerate(zip(raw, output)) if x != y]
-        if not set(changed) <= allowed:
+        if not set(changed) <= ALLOWED_CHANGED_OFFSETS:
             raise ValueError("Unexpected bytes modified")
         if output[SPEED_HOOK:SPEED_HOOK+2] != bytes((value, 0x20)):
             raise ValueError("Output opcode mismatch")
-        if not cls.analyze(output)["crc_valid"]:
-            raise ValueError("Output CRC is invalid")
+        checks = check_component_crcs(output)
+        for name, check in checks.items():
+            if not check["valid"]:
+                raise ValueError("Output " + name + " CRC is invalid")
         return {
+            "schema_version": REPORT_SCHEMA_VERSION,
             "input_sha256": hashlib.sha256(raw).hexdigest(),
             "output_sha256": hashlib.sha256(output).hexdigest(),
             "parameter": value,
             "changed_offsets": changed,
             "changes": [{"offset": i, "before": raw[i], "after": output[i]} for i in changed],
-            "crc_valid": True,
+            **crc_status(checks),
             "format": "modified-ota-package-for-research",
-            "ota_signature_status": "not_re_signed; do not use stock OTA updater",
+            # Pinned original is signed over [0, OTA_SIGNED_END). The patch changes
+            # those bytes while retaining the old signature. This is not a crypto check.
+            "ota_signature_status": "invalidated_by_patch; original signature preserved; not re-signed",
+            "ota_signature_verification": "not_performed",
+            "ota_signed_range": [0, OTA_SIGNED_END],
+            "root_trust_verified": False,
             "hardware_flash_verified": False,
             "physical_kmh_verified": False,
             "kers_modified": False,
@@ -245,6 +288,8 @@ class Mi5PlusPatcher:
         data = bytearray(raw)
         data[SPEED_HOOK:SPEED_HOOK+2] = bytes((kmh, 0x20))
         data[0xB0:0xB2] = crc16_ccitt(data[0x100:0x8D00]).to_bytes(2, "big")
+        # Must follow the inner CRC: [0x80,0x8D00) also covers bytes 0xB0..0xB1.
+        data[0x11:0x13] = crc16_ccitt(data[0x80:0x8D00]).to_bytes(2, "little")
         output = bytes(data)
         cls.verify_output(raw, output, kmh)
         return output

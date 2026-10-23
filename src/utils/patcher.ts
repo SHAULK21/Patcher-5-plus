@@ -6,7 +6,52 @@ const HOOK = 0x5C76;
 const START = 0x100;
 const END = 0x8D00;
 const CRC_OFFSET = 0xB0;
+const OUTER_CRC_OFFSET = 0x11;
+const OTA_SIGNED_END = 0x1E4C6;
+const ALLOWED_CHANGES = new Set([OUTER_CRC_OFFSET, OUTER_CRC_OFFSET + 1, CRC_OFFSET, CRC_OFFSET + 1, HOOK, HOOK + 1]);
 const SIG = [0xAB, 0x49, 0x78, 0x7A, 0x08, 0x80];
+
+type ComponentName = 'inner_component' | 'outer_component' | 'second_component';
+const CRC_REGIONS = [
+  { name: 'inner_component', field: CRC_OFFSET, start: START, end: END, byteOrder: 'big' },
+  { name: 'outer_component', field: OUTER_CRC_OFFSET, start: 0x80, end: END, byteOrder: 'little' },
+  { name: 'second_component', field: 0x1F, start: END, end: 0x1E480, byteOrder: 'little' },
+] as const;
+
+export interface ComponentCrcCheck {
+  field_offset: number;
+  start: number;
+  end: number;
+  byte_order: 'big' | 'little';
+  stored: number | null;
+  computed: number | null;
+  valid: boolean;
+}
+
+export function checkComponentCrcs(data: Uint8Array): Record<ComponentName, ComponentCrcCheck> {
+  return Object.fromEntries(CRC_REGIONS.map(region => {
+    const complete = data.length >= Math.max(region.end, region.field + 2);
+    const stored = !complete ? null : region.byteOrder === 'big'
+      ? (data[region.field] << 8) | data[region.field + 1]
+      : data[region.field] | (data[region.field + 1] << 8);
+    const computed = complete ? crc16Ccitt(data.subarray(region.start, region.end)) : null;
+    return [region.name, {
+      field_offset: region.field, start: region.start, end: region.end,
+      byte_order: region.byteOrder, stored, computed, valid: complete && stored === computed,
+    }];
+  })) as Record<ComponentName, ComponentCrcCheck>;
+}
+
+function crcStatus(checks: Record<ComponentName, ComponentCrcCheck>) {
+  return {
+    component_crcs: checks,
+    inner_component_crc_valid: checks.inner_component.valid,
+    outer_component_crc_valid: checks.outer_component.valid,
+    second_component_crc_valid: checks.second_component.valid,
+    crc_valid: Object.values(checks).every(check => check.valid),
+    crc_valid_scope: 'all_three_component_checks' as const,
+  };
+}
 
 export function bytesToHex(bytes: Uint8Array, separator = ' '): string {
   return Array.from(bytes, b => b.toString(16).padStart(2, '0').toUpperCase()).join(separator);
@@ -54,8 +99,9 @@ export async function validateReference(input: Uint8Array): Promise<string> {
   if (hash !== REFERENCE_SHA256) throw new Error('Unknown or modified SHA-256. Use the original reference OTA.');
   if (!matches(input, 0x90, Array.from(new TextEncoder().encode('SZMC-ES-02664-LQ'))) ||
       input[0x86] !== 0x8C || input[0x87] !== 0x00) throw new Error('Protected region layout mismatch');
-  const stored = (input[CRC_OFFSET] << 8) | input[CRC_OFFSET + 1];
-  if (stored !== crc16Ccitt(input.subarray(START, END))) throw new Error('Input CRC is invalid');
+  for (const [name, check] of Object.entries(checkComponentCrcs(input))) {
+    if (!check.valid) throw new Error('Input ' + name + ' CRC is invalid');
+  }
   const hits = findSpeedHooks(input);
   if (hits.length !== 1 || hits[0] !== HOOK || !matches(input, HOOK - 2, SIG)) throw new Error('Hook not unique or full signature mismatch');
   if (!matches(input, 0x5F24, [0x34, 0x02, 0x00, 0x20])) throw new Error('Hook RAM destination mismatch');
@@ -72,16 +118,55 @@ export interface PatchOptions {
 }
 
 export interface ResearchReport {
+  schema_version: 2;
   input_sha256: string;
   output_sha256: string;
   parameter: number;
+  changed_offsets: number[];
   changes: { offset: number; before: number; after: number }[];
   crc_valid: boolean;
+  crc_valid_scope: 'all_three_component_checks';
+  component_crcs: Record<ComponentName, ComponentCrcCheck>;
+  inner_component_crc_valid: boolean;
+  outer_component_crc_valid: boolean;
+  second_component_crc_valid: boolean;
   format: string;
   ota_signature_status: string;
+  ota_signature_verification: 'not_performed';
+  ota_signed_range: [number, number];
+  root_trust_verified: false;
   hardware_flash_verified: boolean;
   physical_kmh_verified: boolean;
   kers_modified: boolean;
+}
+
+export async function verifyOutput(raw: Uint8Array, patched: Uint8Array, value: number): Promise<ResearchReport> {
+  const input = new Uint8Array(raw);
+  const output = new Uint8Array(patched);
+  const inputHash = await validateReference(input);
+  if (!Number.isInteger(value) || value < 1 || value > 60) throw new Error('Parameter must be an integer from 1 to 60');
+  if (output.length !== input.length) throw new Error('Output size changed');
+  const changes: ResearchReport['changes'] = [];
+  for (let i = 0; i < input.length; i++) {
+    if (input[i] !== output[i]) {
+      if (!ALLOWED_CHANGES.has(i)) throw new Error('Unexpected bytes modified');
+      changes.push({ offset: i, before: input[i], after: output[i] });
+    }
+  }
+  if (!matches(output, HOOK, [value, 0x20])) throw new Error('Output opcode mismatch');
+  const checks = checkComponentCrcs(output);
+  for (const [name, check] of Object.entries(checks)) {
+    if (!check.valid) throw new Error('Output ' + name + ' CRC is invalid');
+  }
+  return {
+    schema_version: 2, input_sha256: inputHash, output_sha256: await calculateSHA256(output), parameter: value,
+    changed_offsets: changes.map(change => change.offset), changes, ...crcStatus(checks),
+    format: 'modified-ota-package-for-research',
+    // The pinned original's signed range changes; no cryptographic verification runs here.
+    ota_signature_status: 'invalidated_by_patch; original signature preserved; not re-signed',
+    ota_signature_verification: 'not_performed', ota_signed_range: [0, OTA_SIGNED_END], root_trust_verified: false,
+    hardware_flash_verified: false, physical_kmh_verified: false, kers_modified: false,
+  };
 }
 
 export async function applySpeedPatch(firmwareBuffer: Uint8Array, options: PatchOptions): Promise<PatchResult & { report?: ResearchReport }> {
@@ -102,29 +187,16 @@ export async function applySpeedPatch(firmwareBuffer: Uint8Array, options: Patch
     output.set([value, 0x20], HOOK);
     const crc = crc16Ccitt(output.subarray(START, END));
     output.set([crc >> 8, crc & 0xFF], CRC_OFFSET);
-    const changes: ResearchReport['changes'] = [];
-    const allowed = new Set([CRC_OFFSET, CRC_OFFSET + 1, HOOK, HOOK + 1]);
-    for (let i = 0; i < input.length; i++) {
-      if (input[i] !== output[i]) {
-        if (!allowed.has(i)) throw new Error('Unexpected bytes modified');
-        changes.push({ offset: i, before: input[i], after: output[i] });
-      }
-    }
-    if (crc16Ccitt(output.subarray(START, END)) !== ((output[CRC_OFFSET] << 8) | output[CRC_OFFSET + 1]))
-      throw new Error('Output CRC validation failed');
-    if (!matches(output, HOOK, [value, 0x20])) throw new Error('Output opcode mismatch');
-    const hash = await calculateSHA256(output);
+    // The outer CRC covers the updated inner CRC. Its field is little-endian.
+    const outerCrc = crc16Ccitt(output.subarray(0x80, END));
+    output.set([outerCrc & 0xFF, outerCrc >> 8], OUTER_CRC_OFFSET);
+    const report = await verifyOutput(input, output, value);
     return {
       ...result, success: true, signatureFound: true, signatureOffset: HOOK - 2,
       originalBytes: '78 7A', patchedBytes: bytesToHex(output.subarray(HOOK, HOOK + 2)),
-      patchedBuffer: output, sha256Patched: hash,
-      message: 'Instruction patched and CRC verified. Research package; hardware flashing and OTA signing are unverified.',
-      report: {
-        input_sha256: result.sha256Original, output_sha256: hash, parameter: value,
-        changes, crc_valid: true, format: 'modified-ota-package-for-research',
-        ota_signature_status: 'not_re_signed; do not use stock OTA updater',
-        hardware_flash_verified: false, physical_kmh_verified: false, kers_modified: false,
-      },
+      patchedBuffer: output, sha256Patched: report.output_sha256,
+      message: 'Instruction patched; all three component CRCs verified. The original OTA signature is invalidated by the patch.',
+      report,
     };
   } catch (error) {
     return { ...result, message: error instanceof Error ? error.message : String(error) };
